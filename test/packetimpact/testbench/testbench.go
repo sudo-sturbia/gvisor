@@ -62,6 +62,22 @@ func (n *DUTUname) IsLinux() bool {
 	return Native && n.OperatingSystem == "GNU/Linux"
 }
 
+// IsNetstack returns true if the DUT is running Linux with gVisor netstack.
+func (*DUTUname) IsNetstack() bool {
+	return !Native
+}
+
+// IsFuchsia returns true if the DUT is running Fuchsia.
+func (n *DUTUname) IsFuchsia() bool {
+	return n.OperatingSystem == "Fuchsia"
+}
+
+// IsNetstackOrFuchsia returns true if the DUT is running Linux with gVisor
+// netstack or Fuchsia.
+func (n *DUTUname) IsNetstackOrFuchsia() bool {
+	return n.IsNetstack() || n.IsFuchsia()
+}
+
 // DUTTestNet describes the test network setup on dut and how the testbench
 // should connect with an existing DUT.
 type DUTTestNet struct {
@@ -97,6 +113,16 @@ type DUTTestNet struct {
 	// POSIXServerPort is the UDP port the POSIX server is bound to on the
 	// control network.
 	POSIXServerPort uint16
+}
+
+// SubnetBroadcast returns the test network's subnet broadcast address.
+func (n *DUTTestNet) SubnetBroadcast() net.IP {
+	addr := append([]byte(nil), n.RemoteIPv4...)
+	mask := net.CIDRMask(n.IPv4PrefixLength, net.IPv4len*8)
+	for i := range addr {
+		addr[i] |= ^mask[i]
+	}
+	return addr
 }
 
 // registerFlags defines flags and associates them with the package-level
