@@ -1,5 +1,6 @@
 load("//tools:defs.bzl", "more_shards", "most_shards")
 load("//test/runner:defs.bzl", "syscall_test")
+load("//test/syscalls:defs.bzl", "targets_check")
 
 package(licenses = ["notice"])
 
@@ -575,8 +576,9 @@ syscall_test(
     test = "//test/syscalls/linux:sigaction_test",
 )
 
-# TODO(b/119826902): Enable once the test passes in runsc.
-# syscall_test(vfs2="True",test = "//test/syscalls/linux:sigaltstack_test")
+syscall_test(
+    test = "//test/syscalls/linux:sigaltstack_test",
+)
 
 syscall_test(
     test = "//test/syscalls/linux:sigreturn_test",
@@ -1004,4 +1006,23 @@ syscall_test(
 
 syscall_test(
     test = "//test/syscalls/linux:cgroup_test",
+)
+
+syscall_test(
+    test = "//test/syscalls/linux:mlock_test",
+)
+
+targets_check(
+    name = "targets_check",
+    testonly = 1,
+    ignore = [
+        "//test/syscalls/linux:socket_ipv6_udp_unbound_external_networking_test",
+        "//test/syscalls/linux:socket_bind_to_device_test",
+        "//test/syscalls/linux:socket_bind_to_device_sequence_test",
+        "//test/syscalls/linux:socket_bind_to_device_distribution_test",
+        "//test/syscalls/linux:memfd_test",
+        "//test/syscalls/linux:xattr_test",
+    ],
+    targets = ["//test/syscalls/linux:targets"],
+    tests = existing_rules(),
 )

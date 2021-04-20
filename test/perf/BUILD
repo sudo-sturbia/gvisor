@@ -1,6 +1,10 @@
+load("//test/syscalls:defs.bzl", "targets_check")
 load("//test/runner:defs.bzl", "syscall_test")
 
-package(licenses = ["notice"])
+package(
+    default_visibility = ["//:sandbox"],
+    licenses = ["notice"],
+)
 
 syscall_test(
     debug = False,
@@ -136,4 +140,14 @@ syscall_test(
     add_overlay = True,
     debug = False,
     test = "//test/perf/linux:write_benchmark",
+)
+
+targets_check(
+    name = "targets_check",
+    testonly = 1,
+    ignore = [
+        "//test/perf/linux:open_read_close_benchmark",
+    ],
+    targets = ["//test/perf/linux:targets"],
+    tests = existing_rules(),
 )
