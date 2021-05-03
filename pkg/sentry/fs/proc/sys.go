@@ -103,11 +103,20 @@ func (p *proc) newVMDir(ctx context.Context, msrc *fs.MountSource) *fs.Inode {
 	return newProcInode(ctx, d, msrc, fs.SpecialDirectory, nil)
 }
 
+func (p *proc) newFsDir(ctx context.Context, msrc *fs.MountSource) *fs.Inode {
+	children := map[string]*fs.Inode{
+		"nr_open": newStaticProcInode(ctx, msrc, []byte(strconv.FormatUint(linux.NR_OPEN, 10))),
+	}
+	d := ramfs.NewDir(ctx, children, fs.RootOwner, fs.FilePermsFromMode(0555))
+	return newProcInode(ctx, d, msrc, fs.SpecialDirectory, nil)
+}
+
 func (p *proc) newSysDir(ctx context.Context, msrc *fs.MountSource) *fs.Inode {
 	children := map[string]*fs.Inode{
 		"kernel": p.newKernelDir(ctx, msrc),
 		"net":    p.newSysNetDir(ctx, msrc),
 		"vm":     p.newVMDir(ctx, msrc),
+		"fs":     p.newFsDir(ctx, msrc),
 	}
 
 	d := ramfs.NewDir(ctx, children, fs.RootOwner, fs.FilePermsFromMode(0555))

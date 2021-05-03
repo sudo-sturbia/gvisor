@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"strconv"
 
 	"gvisor.dev/gvisor/pkg/abi/linux"
 	"gvisor.dev/gvisor/pkg/context"
@@ -59,6 +60,9 @@ func (fs *filesystem) newSysDir(ctx context.Context, root *auth.Credentials, k *
 			"overcommit_memory": fs.newInode(ctx, root, 0444, newStaticFile("0\n")),
 		}),
 		"net": fs.newSysNetDir(ctx, root, k),
+		"fs": fs.newStaticDir(ctx, root, map[string]kernfs.Inode{
+			"nr_open": fs.newInode(ctx, root, 0444, newStaticFile(strconv.Itoa(linux.NR_OPEN))),
+		}),
 	})
 }
 

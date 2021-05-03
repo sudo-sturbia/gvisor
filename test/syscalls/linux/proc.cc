@@ -16,6 +16,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <linux/limits.h>
 #include <linux/magic.h>
 #include <linux/sem.h>
 #include <sched.h>
@@ -107,6 +108,9 @@ namespace {
 #ifndef SUID_DUMP_ROOT
 #define SUID_DUMP_ROOT 2
 #endif /* SUID_DUMP_ROOT */
+#ifndef NR_OPEN
+#define NR_OPEN 200000000
+#endif /* NR_OPEN */
 
 #if defined(__x86_64__) || defined(__i386__)
 // This list of "required" fields is taken from reading the file
@@ -2447,6 +2451,15 @@ TEST(ProcFilesystems, PresenceOfSem) {
   ASSERT_EQ(semmns, SEMMNS);
   ASSERT_EQ(semopm, SEMOPM);
   ASSERT_EQ(semmni, SEMMNI);
+}
+
+TEST(ProcFilesystems, HasFsNrOpen) {
+  std::string proc_file =
+      ASSERT_NO_ERRNO_AND_VALUE(GetContents("/proc/sys/fs/nr_open"));
+  ASSERT_FALSE(proc_file.empty());
+  uint32_t nr_open = 0;
+  ASSERT_TRUE(absl::SimpleAtoi(proc_file, &nr_open));
+  EXPECT_EQ(nr_open, NR_OPEN);
 }
 
 // Check that /proc/mounts is a symlink to self/mounts.
