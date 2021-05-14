@@ -40,7 +40,7 @@ type udpPacket struct {
 }
 
 // EndpointState represents the state of a UDP endpoint.
-type EndpointState uint32
+type EndpointState tcpip.EndpointState
 
 // Endpoint states. Note that are represented in a netstack-specific manner and
 // may not be meaningful externally. Specifically, they need to be translated to

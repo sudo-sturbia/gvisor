@@ -38,20 +38,15 @@ import (
 )
 
 // EndpointState represents the state of a TCP endpoint.
-type EndpointState uint32
+type EndpointState tcpip.EndpointState
 
 // Endpoint states. Note that are represented in a netstack-specific manner and
 // may not be meaningful externally. Specifically, they need to be translated to
 // Linux's representation for these states if presented to userspace.
 const (
-	// Endpoint states internal to netstack. These map to the TCP state CLOSED.
-	StateInitial EndpointState = iota
-	StateBound
-	StateConnecting // Connect() called, but the initial SYN hasn't been sent.
-	StateError
-
-	// TCP protocol states.
-	StateEstablished
+	// TCP protocol states in sync with the definitions in
+	// https://github.com/torvalds/linux/blob/7acac4b3196/include/net/tcp_states.h#L13
+	StateEstablished EndpointState = iota + 1
 	StateSynSent
 	StateSynRecv
 	StateFinWait1
@@ -62,6 +57,12 @@ const (
 	StateLastAck
 	StateListen
 	StateClosing
+
+	// Endpoint states internal to netstack.
+	StateInitial
+	StateBound
+	StateConnecting // Connect() called, but the initial SYN hasn't been sent.
+	StateError
 )
 
 const (
@@ -91,6 +92,16 @@ func (s EndpointState) connected() bool {
 func (s EndpointState) connecting() bool {
 	switch s {
 	case StateConnecting, StateSynSent, StateSynRecv:
+		return true
+	default:
+		return false
+	}
+}
+
+// internal returns true when the state is netstack internal.
+func (s EndpointState) internal() bool {
+	switch s {
+	case StateInitial, StateBound, StateConnecting, StateError:
 		return true
 	default:
 		return false
@@ -1956,6 +1967,14 @@ func (e *endpoint) GetSockOptInt(opt tcpip.SockOptInt) (int, tcpip.Error) {
 func (e *endpoint) getTCPInfo() tcpip.TCPInfoOption {
 	info := tcpip.TCPInfoOption{}
 	e.LockUser()
+	switch state := e.EndpointState(); {
+	case !state.internal():
+		info.State = tcpip.EndpointState(state)
+	case state == StateError:
+		// Map StateError to StateClose as the endpoint is treated as closed
+		// by the state machine.
+		info.State = tcpip.EndpointState(StateClose)
+	}
 	snd := e.snd
 	if snd != nil {
 		// We do not calculate RTT before sending the data packets. If

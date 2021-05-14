@@ -189,6 +189,7 @@ packetimpact_testbench(
     name = "tcp_synsent_reset",
     srcs = ["tcp_synsent_reset_test.go"],
     deps = [
+        "//pkg/abi/linux",
         "//pkg/tcpip/header",
         "//test/packetimpact/testbench",
         "@org_golang_x_sys//unix:go_default_library",

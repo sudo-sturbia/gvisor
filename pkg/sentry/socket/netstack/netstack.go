@@ -1127,6 +1127,7 @@ func getSockOptTCP(t *kernel.Task, s socket.SocketOps, ep commonEndpoint, name, 
 		// TODO(b/64800844): Translate fields once they are added to
 		// tcpip.TCPInfoOption.
 		info := linux.TCPInfo{}
+		info.State = uint8(v.State)
 		switch v.CcState {
 		case tcpip.RTORecovery:
 			info.CaState = linux.TCP_CA_Loss
