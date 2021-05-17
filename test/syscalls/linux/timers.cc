@@ -22,6 +22,7 @@
 
 #include <atomic>
 
+#include "testing/base/public/benchmark.h"
 #include "gtest/gtest.h"
 #include "absl/flags/flag.h"
 #include "absl/time/clock.h"
@@ -92,6 +93,8 @@ TEST(TimerTest, ProcessKilledOnCPUSoftLimit) {
     TEST_PCHECK(setrlimit(RLIMIT_CPU, &cpu_limits) == 0);
     MaybeSave();
     for (;;) {
+      int x = 0;
+      ::testing::DoNotOptimize(x);  // Don't optimize this loop away.
     }
   }
   ASSERT_THAT(pid, SyscallSucceeds());
@@ -151,6 +154,8 @@ TEST(TimerTest, ProcessPingedRepeatedlyAfterCPUSoftLimit) {
     TEST_PCHECK(setrlimit(RLIMIT_CPU, &cpu_limits) == 0);
     MaybeSave();
     for (;;) {
+      int x = 0;
+      ::testing::DoNotOptimize(x);  // Don't optimize this loop away.
     }
   }
   ASSERT_THAT(pid, SyscallSucceeds());
@@ -197,6 +202,8 @@ TEST(TimerTest, ProcessKilledOnCPUHardLimit) {
     TEST_PCHECK(setrlimit(RLIMIT_CPU, &cpu_limits) == 0);
     MaybeSave();
     for (;;) {
+      int x = 0;
+      ::testing::DoNotOptimize(x);  // Don't optimize this loop away.
     }
   }
   ASSERT_THAT(pid, SyscallSucceeds());
