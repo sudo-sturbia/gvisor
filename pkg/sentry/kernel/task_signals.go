@@ -365,6 +365,11 @@ func (t *Task) Sigtimedwait(set linux.SignalSet, timeout time.Duration) (*arch.S
 	return nil, err
 }
 
+// SendSignalToSelf implements signalcontext.Context
+func (t *Task) SendSignalToSelf(sig linux.Signal) error {
+	return t.SendSignal(SignalInfoNoInfo(sig, t, t))
+}
+
 // SendSignal sends the given signal to t.
 //
 // The following errors may be returned:

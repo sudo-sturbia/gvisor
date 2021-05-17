@@ -25,6 +25,7 @@ import (
 	"gvisor.dev/gvisor/pkg/marshal/primitive"
 	"gvisor.dev/gvisor/pkg/safemem"
 	"gvisor.dev/gvisor/pkg/sentry/arch"
+	"gvisor.dev/gvisor/pkg/signalcontext"
 	"gvisor.dev/gvisor/pkg/sync"
 	"gvisor.dev/gvisor/pkg/usermem"
 	"gvisor.dev/gvisor/pkg/waiter"
@@ -85,6 +86,11 @@ func (p *Pipe) Write(ctx context.Context, src usermem.IOSequence) (int64, error)
 	n, err := src.CopyInTo(ctx, p)
 	if n > 0 {
 		p.Notify(waiter.ReadableEvents)
+	}
+	if err == unix.EPIPE {
+		if sctx, ok := ctx.(signalcontext.Context); ok {
+			sctx.SendSignalToSelf(linux.SIGPIPE)
+		}
 	}
 	return n, err
 }
