@@ -16,7 +16,8 @@ go_library(
     name = "mqfs",
     srcs = [
         "mqfs.go",
-        "inodes.go",
+        "root.go",
+        "queue.go",
         "root_inode_refs.go",
     ],
     visibility = ["//pkg/sentry:internal"],
@@ -27,6 +28,9 @@ go_library(
         "//pkg/refsvfs2",
         "//pkg/sentry/fsimpl/kernfs",
         "//pkg/sentry/kernel/auth",
+        "//pkg/sentry/kernel/mq",
         "//pkg/sentry/vfs",
+        "//pkg/usermem",
+        "//pkg/waiter",
     ],
 )
