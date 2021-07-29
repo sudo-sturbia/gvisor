@@ -50,12 +50,31 @@ type RegistryImpl struct {
 
 // NewRegistryImpl returns a new, initialized RegistryImpl, and takes a
 // reference on root.
-func NewRegistryImpl(root *kernfs.Dentry, fs *filesystem) *RegistryImpl {
-	root.IncRef()
-	return &RegistryImpl{
-		root: root,
-		fs:   fs,
+func NewRegistryImpl(ctx context.Context, vfsObj *vfs.VirtualFilesystem, creds *auth.Credentials) (*RegistryImpl, error) {
+	devMinor, err := vfsObj.GetAnonBlockDevMinor()
+	if err != nil {
+		return nil, err
 	}
+
+	fs := &filesystem{
+		devMinor: devMinor,
+	}
+	fs.VFSFilesystem().Init(vfsObj, &FilesystemType{}, fs)
+
+	var dentry kernfs.Dentry
+	dentry.InitRoot(&fs.Filesystem, fs.newRootInode(ctx, creds))
+	dentry.IncRef()
+
+	mount, err := vfsObj.NewDisconnectedMount(fs.VFSFilesystem(), dentry.VFSDentry(), &vfs.MountOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	return &RegistryImpl{
+		root:  &dentry,
+		fs:    fs,
+		mount: mount,
+	}, nil
 }
 
 // Lookup implements mq.RegistryImpl.Lookup.
@@ -67,7 +86,7 @@ func (r *RegistryImpl) Lookup(ctx context.Context, name string) *mq.Queue {
 	if err != nil {
 		return nil
 	}
-	return inode.(*queueInode).queue
+	return inode.(*queueInode).data.(*mq.Queue)
 }
 
 // New implements mq.RegistryImpl.New.
