@@ -18,10 +18,12 @@ package mq
 import (
 	"bytes"
 	"fmt"
+	"strings"
 
 	"gvisor.dev/gvisor/pkg/abi/linux"
 	"gvisor.dev/gvisor/pkg/context"
 	"gvisor.dev/gvisor/pkg/errors/linuxerr"
+	"gvisor.dev/gvisor/pkg/sentry/kernel/auth"
 	"gvisor.dev/gvisor/pkg/sentry/vfs"
 	"gvisor.dev/gvisor/pkg/sync"
 	"gvisor.dev/gvisor/pkg/waiter"
@@ -30,6 +32,18 @@ import (
 const (
 	MaxName     = 255                   // Maximum size for a queue name.
 	maxPriority = linux.MQ_PRIO_MAX - 1 // Highest possible message priority.
+
+	maxQueuesDefault = linux.DFLT_QUEUESMAX // Default max number of queues.
+
+	maxMsgDefault   = linux.DFLT_MSG    // Default max number of messages per queue.
+	maxMsgMin       = linux.MIN_MSGMAX  // Min value for max number of messages per queue.
+	maxMsgLimit     = linux.DFLT_MSGMAX // Limit for max number of messages per queue.
+	maxMsgHardLimit = linux.HARD_MSGMAX // Hard limit for max number of messages per queue.
+
+	msgSizeDefault   = linux.DFLT_MSGSIZE    // Default max message size.
+	msgSizeMin       = linux.MIN_MSGSIZEMAX  // Min value for max message size.
+	msgSizeLimit     = linux.DFLT_MSGSIZEMAX // Limit for max message size.
+	msgSizeHardLimit = linux.HARD_MSGSIZEMAX // Hard limit for max message size.
 )
 
 // Registry is a POSIX message queue registry.
@@ -39,6 +53,12 @@ const (
 //
 // +stateify savable
 type Registry struct {
+	// userNS is the user namespace containing this registry. Immutable.
+	userNS *auth.UserNamespace
+
+	// mu protects all fields below.
+	mu sync.Mutex
+
 	// impl is an implementation of several message queue utilities needed by
 	// the registry. impl should be provided by mqfs.
 	impl RegistryImpl
@@ -71,10 +91,99 @@ type RegistryImpl interface {
 // NewRegistry returns a new, initialized message queue registry. NewRegistry
 // should be called when a new message queue filesystem is created, once per
 // IPCNamespace.
-func NewRegistry(impl RegistryImpl) *Registry {
+func NewRegistry(userNS *auth.UserNamespace, impl RegistryImpl) *Registry {
 	return &Registry{
-		impl: impl,
+		userNS: userNS,
+		impl:   impl,
 	}
+}
+
+// FindOrCreate creates a new POSIX message queue or opens an existing queue.
+// See mq_open(2).
+func (r *Registry) FindOrCreate(ctx context.Context, name string, rOnly, wOnly, readWrite, create, exclusive, block bool, flags uint32, perm linux.FileMode, attr *linux.MqAttr) (*vfs.FileDescription, error) {
+	// mq_overview(7) mentions that: "Each message queue is identified by a name
+	// of the form '/somename'", but the mq_open(3) man pages mention:
+	//   "The mq_open() library function is implemented on top of a system call
+	//    of the same name.  The library function performs the check that the
+	//    name starts with a slash (/), giving the EINVAL error if it does not.
+	//    The kernel system call expects name to contain no preceding slash, so
+	//    the C library function passes name without the preceding slash (i.e.,
+	//    name+1) to the system call."
+	// So we don't need to check it.
+
+	if len(name) == 0 {
+		return nil, linuxerr.ENOENT
+	}
+	if len(name) > MaxName {
+		return nil, linuxerr.ENAMETOOLONG
+	}
+	if strings.ContainsRune(name, '/') {
+		return nil, linuxerr.EACCES
+	}
+	if name == "." || name == ".." {
+		return nil, linuxerr.EINVAL
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	fd, ok, err := r.impl.Get(ctx, name, rOnly, wOnly, readWrite, block, flags)
+	if err != nil {
+		return nil, err
+	}
+
+	if ok {
+		if create && exclusive {
+			// "Both O_CREAT and O_EXCL were specified in oflag, but a queue
+			//  with this name already exists."
+			return nil, linuxerr.EEXIST
+		}
+		return fd, nil
+	}
+
+	if !create {
+		// "The O_CREAT flag was not specified in oflag, and no queue with this name
+		//  exists."
+		return nil, linuxerr.ENOENT
+	}
+
+	q, err := r.newQueueLocked(auth.CredentialsFromContext(ctx), attr)
+	if err != nil {
+		return nil, err
+	}
+	return r.impl.New(ctx, name, q, rOnly, wOnly, readWrite, block, perm, flags)
+}
+
+// newQueueLocked creates a new queue using the given attributes. If attr is nil
+// return a queue with default values, otherwise use attr to create a new queue,
+// and return an error if attributes are invalid.
+func (r *Registry) newQueueLocked(creds *auth.Credentials, attr *linux.MqAttr) (*Queue, error) {
+	if attr == nil {
+		return &Queue{
+			maxMessageCount: int64(maxMsgDefault),
+			maxMessageSize:  uint64(msgSizeDefault),
+		}, nil
+	}
+
+	// "O_CREAT was specified in oflag, and attr was not NULL, but
+	//  attr->mq_maxmsg or attr->mq_msqsize was invalid.  Both of these fields
+	//  these fields must be greater than zero.  In a process that is
+	//  unprivileged (does not have the CAP_SYS_RESOURCE capability),
+	//  attr->mq_maxmsg must be less than or equal to the msg_max limit, and
+	//  attr->mq_msgsize must be less than or equal to the msgsize_max limit.
+	//  In addition, even in a privileged process, attr->mq_maxmsg cannot
+	//  exceed the HARD_MAX limit." - man mq_open(3).
+	if attr.MqMaxmsg <= 0 || attr.MqMsgsize <= 0 {
+		return nil, linuxerr.EINVAL
+	}
+
+	if attr.MqMaxmsg > maxMsgHardLimit || (!creds.HasCapabilityIn(linux.CAP_SYS_RESOURCE, r.userNS) && (attr.MqMaxmsg > maxMsgLimit || attr.MqMsgsize > msgSizeLimit)) {
+		return nil, linuxerr.EINVAL
+	}
+
+	return &Queue{
+		maxMessageCount: attr.MqMaxmsg,
+		maxMessageSize:  uint64(attr.MqMsgsize),
+	}, nil
 }
 
 // Destroy destroys the registry and releases all held references.
@@ -108,9 +217,6 @@ type Queue struct {
 	// subscriber represents a task registered to receive async notification
 	// from this queue.
 	subscriber *Subscriber
-
-	// nonBlock is true if this queue is non-blocking.
-	nonBlock bool
 
 	// messageCount is the number of messages currently in the queue.
 	messageCount int64
