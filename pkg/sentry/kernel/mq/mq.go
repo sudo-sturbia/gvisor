@@ -21,12 +21,14 @@ import (
 
 	"gvisor.dev/gvisor/pkg/abi/linux"
 	"gvisor.dev/gvisor/pkg/context"
+	"gvisor.dev/gvisor/pkg/errors/linuxerr"
 	"gvisor.dev/gvisor/pkg/sentry/vfs"
 	"gvisor.dev/gvisor/pkg/sync"
 	"gvisor.dev/gvisor/pkg/waiter"
 )
 
 const (
+	MaxName     = 255                   // Maximum size for a queue name.
 	maxPriority = linux.MQ_PRIO_MAX - 1 // Highest possible message priority.
 )
 
@@ -47,18 +49,20 @@ type Registry struct {
 // Registry to avoid dealing directly with the filesystem. RegistryImpl should
 // be implemented by mqfs and provided to Registry at initialization.
 type RegistryImpl interface {
-	// Lookup returns the queue with the given name, nil if non exists.
-	Lookup(context.Context, string) *Queue
+	// Get searchs for a queue with the given name, if it exists, the queue is
+	// used to create a new FD, return it and return true. If the queue  doesn't
+	// exist, return false and no error. An error is returned if creation fails.
+	Get(ctx context.Context, name string, rOnly, wOnly, readWrite, block bool, flags uint32) (*vfs.FileDescription, bool, error)
 
 	// New creates a new inode and file description using the given queue,
-	// inserts the inode into the filesystem tree with the given name, and
+	// inserts the inode into the filesystem tree using the given name, and
 	// returns the file description. An error is returned if creation fails, or
 	// if the name already exists.
-	New(context.Context, string, *Queue, linux.FileMode) (*vfs.FileDescription, error)
+	New(ctx context.Context, name string, q *Queue, rOnly, wOnly, readWrite, block bool, perm linux.FileMode, flags uint32) (*vfs.FileDescription, error)
 
 	// Unlink removes the queue with given name from the registry, and returns
 	// an error if the name doesn't exist.
-	Unlink(context.Context, string) error
+	Unlink(ctx context.Context, name string) error
 
 	// Destroy destroys the registry.
 	Destroy(context.Context)
@@ -135,6 +139,41 @@ type View interface {
 	Flush(ctx context.Context)
 
 	waiter.Waitable
+}
+
+// ReaderWriter provides a send and receive view into a queue.
+type ReaderWriter struct {
+	*Queue
+
+	block bool
+}
+
+// Reader provides a send-only view into a queue.
+type Reader struct {
+	*Queue
+
+	block bool
+}
+
+// Writer provides a receive-only view into a queue.
+type Writer struct {
+	*Queue
+
+	block bool
+}
+
+// NewView creates a new view into a queue and returns it.
+func NewView(q *Queue, rOnly, wOnly, readWrite, block bool) (View, error) {
+	switch {
+	case rOnly:
+		return Reader{Queue: q, block: block}, nil
+	case wOnly:
+		return Writer{Queue: q, block: block}, nil
+	case readWrite:
+		return ReaderWriter{Queue: q, block: block}, nil
+	default:
+		return nil, linuxerr.EINVAL
+	}
 }
 
 // Message holds a message exchanged through a Queue via mq_timedsend(2) and

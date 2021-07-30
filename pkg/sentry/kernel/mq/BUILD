@@ -25,6 +25,7 @@ go_library(
     deps = [
         "//pkg/abi/linux",
         "//pkg/context",
+        "//pkg/errors/linuxerr",
         "//pkg/sentry/vfs",
         "//pkg/sync",
         "//pkg/waiter",

@@ -77,20 +77,26 @@ func NewRegistryImpl(ctx context.Context, vfsObj *vfs.VirtualFilesystem, creds *
 	}, nil
 }
 
-// Lookup implements mq.RegistryImpl.Lookup.
-func (r *RegistryImpl) Lookup(ctx context.Context, name string) *mq.Queue {
+// Get implements mq.RegistryImpl.Get.
+func (r *RegistryImpl) Get(ctx context.Context, name string, rOnly, wOnly, readWrite, block bool, flags uint32) (*vfs.FileDescription, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	inode, err := r.lookup(ctx, name)
 	if err != nil {
-		return nil
+		return nil, false, nil
 	}
-	return inode.(*queueInode).data.(*mq.Queue)
+
+	qInode := inode.(*queueInode)
+	fd, err := r.newFD(qInode.queue, qInode, rOnly, wOnly, readWrite, block, flags)
+	if err != nil {
+		return nil, false, err
+	}
+	return fd, true, nil
 }
 
 // New implements mq.RegistryImpl.New.
-func (r *RegistryImpl) New(ctx context.Context, name string, q *mq.Queue, perm linux.FileMode) (*vfs.FileDescription, error) {
+func (r *RegistryImpl) New(ctx context.Context, name string, q *mq.Queue, rOnly, wOnly, readWrite, block bool, perm linux.FileMode, flags uint32) (*vfs.FileDescription, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -100,13 +106,7 @@ func (r *RegistryImpl) New(ctx context.Context, name string, q *mq.Queue, perm l
 	if err != nil {
 		return nil, err
 	}
-
-	fd := &queueFD{queue: q}
-	err = fd.Init(r.mount, r.root, qInode.data, &qInode.locks, 0 /* flags */)
-	if err != nil {
-		return nil, err
-	}
-	return fd.VFSFileDescription(), nil
+	return r.newFD(q, qInode, rOnly, wOnly, readWrite, block, flags)
 }
 
 // Unlink implements mq.RegistryImpl.Unlink.
@@ -122,6 +122,11 @@ func (r *RegistryImpl) Unlink(ctx context.Context, name string) error {
 	return root.Unlink(ctx, name, inode)
 }
 
+// Destroy implements mq.RegistryImpl.Destroy.
+func (r *RegistryImpl) Destroy(ctx context.Context) {
+	r.root.DecRef(ctx)
+}
+
 // lookup retreives a kernfs.Inode using a name.
 //
 // Precondition: r.mu must be held.
@@ -134,7 +139,20 @@ func (r *RegistryImpl) lookup(ctx context.Context, name string) (kernfs.Inode, e
 	return lookup, nil
 }
 
-// Destroy implements mq.RegistryImpl.Destroy.
-func (r *RegistryImpl) Destroy(ctx context.Context) {
-	r.root.DecRef(ctx)
+// newFD returns a new file description created using the given queue and inode.
+func (r *RegistryImpl) newFD(q *mq.Queue, inode *queueInode, rOnly, wOnly, readWrite, block bool, flags uint32) (*vfs.FileDescription, error) {
+	view, err := mq.NewView(q, rOnly, wOnly, readWrite, block)
+	if err != nil {
+		return nil, err
+	}
+
+	var dentry kernfs.Dentry
+	dentry.Init(&r.fs.Filesystem, inode)
+
+	fd := &queueFD{queue: view}
+	err = fd.Init(r.mount, &dentry, inode.queue, inode.Locks(), flags)
+	if err != nil {
+		return nil, err
+	}
+	return &fd.vfsfd, nil
 }
