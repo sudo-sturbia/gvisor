@@ -128,14 +128,14 @@ PosixError MqClose(mqd_t fd) {
 
 // Test simple opening and closing of a message queue.
 TEST(MqTest, Open) {
-  GTEST_SKIP();
+  SKIP_IF(IsRunningWithVFS1());
   EXPECT_THAT(MqOpen(O_RDWR | O_CREAT | O_EXCL, 0777, nullptr),
               IsPosixErrorOkAndHolds(_));
 }
 
 // Test mq_open(2) after mq_unlink(2).
 TEST(MqTest, OpenAfterUnlink) {
-  GTEST_SKIP();
+  SKIP_IF(IsRunningWithVFS1());
 
   PosixQueue queue = ASSERT_NO_ERRNO_AND_VALUE(
       MqOpen(O_RDWR | O_CREAT | O_EXCL, 0777, nullptr));
@@ -147,7 +147,7 @@ TEST(MqTest, OpenAfterUnlink) {
 
 // Test using invalid args with mq_open.
 TEST(MqTest, OpenInvalidArgs) {
-  GTEST_SKIP();
+  SKIP_IF(IsRunningWithVFS1());
 
   // Name must start with a slash.
   EXPECT_THAT(MqOpen("test", O_RDWR), PosixErrorIs(EINVAL));
@@ -187,7 +187,7 @@ TEST(MqTest, OpenInvalidArgs) {
 
 // Test creating a queue that already exists.
 TEST(MqTest, CreateAlreadyExists) {
-  GTEST_SKIP();
+  SKIP_IF(IsRunningWithVFS1());
 
   PosixQueue queue = ASSERT_NO_ERRNO_AND_VALUE(
       MqOpen(O_RDWR | O_CREAT | O_EXCL, 0777, nullptr));
@@ -198,7 +198,7 @@ TEST(MqTest, CreateAlreadyExists) {
 
 // Test opening a queue that doesn't exists.
 TEST(MqTest, NoQueueExists) {
-  GTEST_SKIP();
+  SKIP_IF(IsRunningWithVFS1());
 
   // Choose a name to pass that's unlikely to exist if the test is run locally.
   EXPECT_THAT(MqOpen("/gvisor-mq-test-nonexistent-queue", O_RDWR),
@@ -207,8 +207,8 @@ TEST(MqTest, NoQueueExists) {
 
 // Test changing IPC namespace.
 TEST(MqTest, ChangeIpcNamespace) {
-  GTEST_SKIP();
-  SKIP_IF(!ASSERT_NO_ERRNO_AND_VALUE(HaveCapability(CAP_SYS_ADMIN)));
+  SKIP_IF(IsRunningWithVFS1() ||
+          !ASSERT_NO_ERRNO_AND_VALUE(HaveCapability(CAP_SYS_ADMIN)));
 
   // When changing IPC namespaces, Linux doesn't invalidate or close the
   // previously opened file descriptions and allows operations to be performed
@@ -238,7 +238,7 @@ TEST(MqTest, ChangeIpcNamespace) {
 
 // Test read(2) from an empty queue.
 TEST(MqTest, ReadEmpty) {
-  GTEST_SKIP();
+  SKIP_IF(IsRunningWithVFS1());
 
   PosixQueue queue = ASSERT_NO_ERRNO_AND_VALUE(
       MqOpen(O_RDWR | O_CREAT | O_EXCL, 0777, nullptr));
@@ -257,7 +257,7 @@ TEST(MqTest, ReadEmpty) {
 
 // Test poll(2) on an empty queue.
 TEST(MqTest, PollEmpty) {
-  GTEST_SKIP();
+  SKIP_IF(IsRunningWithVFS1());
 
   PosixQueue queue = ASSERT_NO_ERRNO_AND_VALUE(
       MqOpen(O_RDWR | O_CREAT | O_EXCL, 0777, nullptr));
