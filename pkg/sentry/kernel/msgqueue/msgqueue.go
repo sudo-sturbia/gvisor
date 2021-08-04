@@ -129,13 +129,6 @@ type Message struct {
 	Size uint64
 }
 
-// Blocker is used for blocking Queue.Send, and Queue.Receive calls that serves
-// as an abstracted version of kernel.Task. kernel.Task is not directly used to
-// prevent circular dependencies.
-type Blocker interface {
-	Block(C <-chan struct{}) error
-}
-
 // FindOrCreate creates a new message queue or returns an existing one. See
 // msgget(2).
 func (r *Registry) FindOrCreate(ctx context.Context, key ipc.Key, mode linux.FileMode, private, create, exclusive bool) (*Queue, error) {
@@ -208,7 +201,7 @@ func (r *Registry) FindByID(id ipc.ID) (*Queue, error) {
 
 // Send appends a message to the message queue, and returns an error if sending
 // fails. See msgsnd(2).
-func (q *Queue) Send(ctx context.Context, m Message, b Blocker, wait bool, pid int32) (err error) {
+func (q *Queue) Send(ctx context.Context, m Message, wait bool, pid int32) (err error) {
 	// Try to perform a non-blocking send using queue.append. If EWOULDBLOCK
 	// is returned, start the blocking procedure. Otherwise, return normally.
 	creds := auth.CredentialsFromContext(ctx)
@@ -227,7 +220,17 @@ func (q *Queue) Send(ctx context.Context, m Message, b Blocker, wait bool, pid i
 		if err = q.append(ctx, m, creds, pid); err != linuxerr.EWOULDBLOCK {
 			break
 		}
-		b.Block(ch)
+
+		cancel := ctx.SleepStart()
+		select {
+		case <-ch:
+			ctx.SleepFinish(true)
+		case <-cancel:
+			ctx.SleepFinish(false)
+
+			q.senders.EventUnregister(&e)
+			return linuxerr.EINTR
+		}
 	}
 
 	q.senders.EventUnregister(&e)
@@ -295,7 +298,7 @@ func (q *Queue) append(ctx context.Context, m Message, creds *auth.Credentials, 
 }
 
 // Receive removes a message from the queue and returns it. See msgrcv(2).
-func (q *Queue) Receive(ctx context.Context, b Blocker, mType int64, maxSize int64, wait, truncate, except bool, pid int32) (msg *Message, err error) {
+func (q *Queue) Receive(ctx context.Context, mType int64, maxSize int64, wait, truncate, except bool, pid int32) (msg *Message, err error) {
 	if maxSize < 0 || maxSize > maxMessageBytes {
 		return nil, linuxerr.EINVAL
 	}
@@ -319,7 +322,17 @@ func (q *Queue) Receive(ctx context.Context, b Blocker, mType int64, maxSize int
 		if msg, err = q.pop(ctx, creds, mType, max, truncate, except, pid); err != linuxerr.EWOULDBLOCK {
 			break
 		}
-		b.Block(ch)
+
+		cancel := ctx.SleepStart()
+		select {
+		case <-ch:
+			ctx.SleepFinish(true)
+		case <-cancel:
+			ctx.SleepFinish(false)
+
+			q.receivers.EventUnregister(&e)
+			return nil, linuxerr.EINTR
+		}
 	}
 	q.receivers.EventUnregister(&e)
 	return msg, err

@@ -74,7 +74,7 @@ func Msgsnd(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Syscal
 		Text: buf.Text,
 		Size: uint64(size),
 	}
-	return 0, nil, queue.Send(t, msg, t, wait, pid)
+	return 0, nil, queue.Send(t, msg, wait, pid)
 }
 
 // Msgrcv implements msgrcv(2).
@@ -123,7 +123,7 @@ func receive(t *kernel.Task, id ipc.ID, mType int64, maxSize int64, msgCopy, wai
 		}
 		return queue.Copy(mType)
 	}
-	return queue.Receive(t, t, mType, maxSize, wait, truncate, except, pid)
+	return queue.Receive(t, mType, maxSize, wait, truncate, except, pid)
 }
 
 // Msgctl implements msgctl(2).
