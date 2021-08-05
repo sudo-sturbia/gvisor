@@ -14,11 +14,14 @@
 
 #include <fcntl.h>
 #include <mqueue.h>
+#include <sched.h>
+#include <sys/poll.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include <string>
 
+#include "test/util/capability_util.h"
 #include "test/util/posix_error.h"
 #include "test/util/temp_path.h"
 #include "test/util/test_util.h"
@@ -200,6 +203,71 @@ TEST(MqTest, NoQueueExists) {
   // Choose a name to pass that's unlikely to exist if the test is run locally.
   EXPECT_THAT(MqOpen("/gvisor-mq-test-nonexistent-queue", O_RDWR),
               PosixErrorIs(ENOENT));
+}
+
+// Test changing IPC namespace.
+TEST(MqTest, ChangeIpcNamespace) {
+  GTEST_SKIP();
+  SKIP_IF(!ASSERT_NO_ERRNO_AND_VALUE(HaveCapability(CAP_SYS_ADMIN)));
+
+  // When changing IPC namespaces, Linux doesn't invalidate or close the
+  // previously opened file descriptions and allows operations to be performed
+  // on them normally, until they're closed.
+  //
+  // To test this we create a new queue, use unshare(CLONE_NEWIPC) to change
+  // into a new IPC namespace, and trying performing a read(2) on the queue.
+  PosixQueue queue = ASSERT_NO_ERRNO_AND_VALUE(
+      MqOpen(O_RDWR | O_CREAT | O_EXCL, 0777, nullptr));
+
+  // As mq_unlink(2) uses queue's name, it should fail after changing IPC
+  // namespace. To clean the queue, we should unlink it now, this should not
+  // cause a problem, as the queue presists until the last mq_close(2).
+  ASSERT_NO_ERRNO(MqUnlink(queue.name()));
+
+  ASSERT_THAT(unshare(CLONE_NEWIPC), SyscallSucceeds());
+
+  const size_t msgSize = 60;
+  char queueRead[msgSize];
+  ASSERT_THAT(read(queue.fd(), &queueRead[0], msgSize - 1), SyscallSucceeds());
+
+  ASSERT_NO_ERRNO(MqClose(queue.release()));
+
+  // Unlinking should fail now after changing IPC namespace.
+  EXPECT_THAT(MqUnlink(queue.name()), PosixErrorIs(ENOENT));
+}
+
+// Test read(2) from an empty queue.
+TEST(MqTest, ReadEmpty) {
+  GTEST_SKIP();
+
+  PosixQueue queue = ASSERT_NO_ERRNO_AND_VALUE(
+      MqOpen(O_RDWR | O_CREAT | O_EXCL, 0777, nullptr));
+
+  const size_t msgSize = 60;
+  char queueRead[msgSize];
+  queueRead[msgSize - 1] = '\0';
+
+  ASSERT_THAT(read(queue.fd(), &queueRead[0], msgSize - 1), SyscallSucceeds());
+
+  std::string want(
+      "QSIZE:0          NOTIFY:0     SIGNO:0     NOTIFY_PID:0     ");
+  std::string got(queueRead);
+  EXPECT_EQ(got, want);
+}
+
+// Test poll(2) on an empty queue.
+TEST(MqTest, PollEmpty) {
+  GTEST_SKIP();
+
+  PosixQueue queue = ASSERT_NO_ERRNO_AND_VALUE(
+      MqOpen(O_RDWR | O_CREAT | O_EXCL, 0777, nullptr));
+
+  struct pollfd pfd;
+  pfd.fd = queue.fd();
+  pfd.events = POLLOUT | POLLIN | POLLRDNORM | POLLWRNORM;
+
+  ASSERT_THAT(poll(&pfd, 1, -1), SyscallSucceeds());
+  ASSERT_EQ(pfd.revents, POLLOUT | POLLWRNORM);
 }
 
 }  // namespace
