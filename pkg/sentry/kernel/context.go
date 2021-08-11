@@ -16,11 +16,13 @@ package kernel
 
 import (
 	"gvisor.dev/gvisor/pkg/context"
+	"gvisor.dev/gvisor/pkg/sentry/kernel/ipc"
 )
 
 // contextID is the kernel package's type for context.Context.Value keys.
 type contextID int
 
+// Constant values should be kept in order. See kernel/ipc/ns.go.
 const (
 	// CtxCanTrace is a Context.Value key for a function with the same
 	// signature and semantics as kernel.Task.CanTrace.
@@ -39,7 +41,7 @@ const (
 	CtxUTSNamespace
 
 	// CtxIPCNamespace is a Context.Value key for a IPCNamespace.
-	CtxIPCNamespace
+	CtxIPCNamespace = ipc.CtxIPCNamespace
 )
 
 // ContextCanTrace returns true if ctx is permitted to trace t, in the same sense
