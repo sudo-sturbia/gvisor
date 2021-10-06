@@ -24,8 +24,10 @@ import (
 	"gvisor.dev/gvisor/pkg/abi/linux"
 	"gvisor.dev/gvisor/pkg/context"
 	"gvisor.dev/gvisor/pkg/errors/linuxerr"
+	"gvisor.dev/gvisor/pkg/marshal/primitive"
 	"gvisor.dev/gvisor/pkg/sentry/fs"
 	"gvisor.dev/gvisor/pkg/sentry/kernel/auth"
+	"gvisor.dev/gvisor/pkg/sentry/socket/netlink"
 	"gvisor.dev/gvisor/pkg/sentry/vfs"
 	"gvisor.dev/gvisor/pkg/sync"
 	"gvisor.dev/gvisor/pkg/waiter"
@@ -324,6 +326,10 @@ type Subscriber struct {
 	// signal is the signal number to be sent.
 	signal linux.Signal
 
+	// cookie is a 32-byte cookie, sent as a trigger to a netlink socket when
+	// mq_notify(SIGEV_THREAD) is used.
+	cookie []byte
+
 	// method is the method of notification.
 	method int32
 
@@ -414,19 +420,14 @@ func (q *Queue) push(ctx context.Context, msg Message) error {
 	// Notify subscriber if this is the first message and there are no
 	// waiting receivers.
 	if q.subscriber != nil && q.receivers.IsEmpty() && q.messageCount == 1 {
-		if q.subscriber.target != nil {
-			pid, ok := context.ThreadGroupIDFromContext(ctx)
-			if !ok {
-				panic("mq.push: failed to get pid")
-			}
-
-			info := &linux.SignalInfo{
-				Signo: int32(q.subscriber.signal),
-				Code:  linux.SI_MESGQ,
-			}
-			info.SetPID(pid)
-			info.SetUID(int32(fs.FileOwnerFromContext(ctx).UID))
-			q.subscriber.target.SendSignal(info)
+		switch q.subscriber.method {
+		case linux.SIGEV_NONE:
+			// "A "null" notification: the calling process is registered as the
+			//  target for notification, but when a message arrives, no
+			//  notification is sent."
+		case linux.SIGEV_SIGNAL:
+			q.notifySignal(ctx)
+		case linux.SIGEV_THREAD:
 		}
 		q.subscriber = nil
 	}
@@ -435,6 +436,55 @@ func (q *Queue) push(ctx context.Context, msg Message) error {
 	q.receivers.Notify(waiter.EventIn)
 
 	return nil
+}
+
+// notifySignal sends an async signal to a task, see mq_notify(SIGEV_SIGNAL).
+func (q *Queue) notifySignal(ctx context.Context) {
+	pid, ok := context.ThreadGroupIDFromContext(ctx)
+	if !ok {
+		panic("mq.push: failed to get pid")
+	}
+
+	info := &linux.SignalInfo{
+		Signo: int32(q.subscriber.signal),
+		Code:  linux.SI_MESGQ,
+	}
+	info.SetPID(pid)
+	info.SetUID(int32(fs.FileOwnerFromContext(ctx).UID))
+	q.subscriber.target.SendSignal(info)
+}
+
+// FDTable is used by Queue to get a netlink socket with a given FD. kernel.Task
+// can't be directly used to prevent circular dependency.
+type FDTable interface {
+	GetFileVFS2(fd int32) *vfs.FileDescription
+}
+
+// notifyThread implements the behaviour expected by mq_notify(SIGEV_THREAD).
+func (q *Queue) notifyThread(ctx context.Context, t FDTable, notifyCode uint) {
+	// Get socket from the file descriptor.
+	file := t.GetFileVFS2(int32(q.subscriber.signal))
+	if file == nil {
+		panic("mq.notifyThread: sigev_signo is not a file descriptor")
+	}
+	defer file.DecRef(ctx)
+
+	// Extract the socket.
+	s, ok := file.Impl().(*netlink.SocketVFS2)
+	if !ok {
+		panic("mq.notifyThread: file descriptor is not a socket")
+	}
+
+	// Create message to send.
+	q.subscriber.cookie[len(q.subscriber.cookie)-1] = byte(notifyCode)
+
+	var message netlink.Message
+	message.Put(primitive.ByteSlice(q.subscriber.cookie))
+
+	set := &netlink.MessageSet{
+		Messages: []*netlink.Message{&message},
+	}
+	s.SendResponse(ctx, set)
 }
 
 // receive returns the message with the highest priority from the queue. See
@@ -517,7 +567,7 @@ func (q *Queue) Attr(block bool) *linux.MqAttr {
 }
 
 // Register implements View.Register.
-func (q *Queue) Register(t Target, event *linux.Sigevent, pid int32) error {
+func (q *Queue) Register(t Target, event *linux.Sigevent, cookie []byte, pid int32) error {
 	if invalidEvent(event) {
 		// "sevp->sigev_notify is not one of the permitted values; or
 		//  sevp->sigev_notify is SIGEV_SIGNAL and sevp->sigev_signo is not a
@@ -534,23 +584,20 @@ func (q *Queue) Register(t Target, event *linux.Sigevent, pid int32) error {
 		return linuxerr.EBUSY
 	}
 
-	switch event.Notify {
-	case linux.SIGEV_NONE:
-		q.subscriber = &Subscriber{
-			signal: linux.Signal(event.Signo),
-			method: event.Notify,
-			pid:    pid,
-		}
-	case linux.SIGEV_SIGNAL:
-		q.subscriber = &Subscriber{
-			target: t,
-			signal: linux.Signal(event.Signo),
-			method: event.Notify,
-			pid:    pid,
-		}
-	case linux.SIGEV_THREAD:
-		return linuxerr.EOPNOTSUPP
+	subscriber := &Subscriber{
+		signal: linux.Signal(event.Signo),
+		method: event.Notify,
+		pid:    pid,
 	}
+
+	switch event.Notify {
+	case linux.SIGEV_SIGNAL:
+		subscriber.target = t
+	case linux.SIGEV_THREAD:
+		subscriber.cookie = cookie
+	}
+
+	q.subscriber = subscriber
 	return nil
 }
 

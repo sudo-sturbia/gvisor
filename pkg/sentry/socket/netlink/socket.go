@@ -597,8 +597,8 @@ func (kernelSCM) Credentials(*kernel.Task) (kernel.ThreadID, auth.UID, auth.GID)
 // kernelCreds is the concrete version of kernelSCM used in all creds.
 var kernelCreds = &kernelSCM{}
 
-// sendResponse sends the response messages in ms back to userspace.
-func (s *socketOpsCommon) sendResponse(ctx context.Context, ms *MessageSet) *syserr.Error {
+// SendResponse sends the response messages in ms back to userspace.
+func (s *socketOpsCommon) SendResponse(ctx context.Context, ms *MessageSet) *syserr.Error {
 	// Linux combines multiple netlink messages into a single datagram.
 	bufs := make([][]byte, 0, len(ms.Messages))
 	for _, m := range ms.Messages {
@@ -697,7 +697,7 @@ func (s *socketOpsCommon) processMessages(ctx context.Context, buf []byte) *syse
 			dumpAckMesage(hdr, ms)
 		}
 
-		if err := s.sendResponse(ctx, ms); err != nil {
+		if err := s.SendResponse(ctx, ms); err != nil {
 			return err
 		}
 	}
